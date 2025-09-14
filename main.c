@@ -7,31 +7,67 @@
 #include <time.h>
 #include <unistd.h>
 
-// Colors
-#define REDI 240, 10, 10
-#define GREENI 10, 240, 10
-#define BORDERCOLOR 220, 220, 10
 #define BORDERSYM "&"
-
-// Game Variables
-/* #define gamewidth 50 */
-/* #define gameheight 30 */
-/* #define bombcount 250 */
-/* #define gamewidth 64 */
-/* #define gameheight 16 */
+#define DEBUG false
 
 #define gamewidth 100
 #define gameheight 30
 #define bombcount 400
 
-int wcol, wrow, ghx, gmx, ghy, gmy, px = 10, py = 10, flags = 0, runcond = 1, boxxys = 0, boxxyso = 0, nc = 0;
+int ghx, ghy, px = 10, py = 10, flags = 0, runcond = 1;
+//there are two cordinate systems: global and field
+//global position can be seen in the status bar as X and Y, field can be seen as fX and fY
+//ghx ghy are the cordinates of the 'origin'
+//px and py is the player cordinate in the global system
 
-char hiddenfield[gameheight][gamewidth];
 char openfield[gameheight][gamewidth];
+char hiddenfield[gameheight][gamewidth];
+char ringfield[gameheight][gamewidth];
+//openfield represents the visible field
+//hidden field represents the hidden bomb and number layer
+//ringfield is a layer used to process large areas of blank cells
+
+void outfield(char array[gameheight][gamewidth], const char *filename);
+void get_size();
+void action(int action);
+void mossy(int j, int i);
+bool safeplace(int j, int i);
+void showfield(int j, int i);
+int quick_key();
+void flatten();
+void renderfield(char field[gameheight][gamewidth]);
+void renderplayer();
+void setfield();
+void gameloop();
 
 void showfield(int j, int i) { openfield[j][i] = hiddenfield[j][i]; }
 
+bool safeplace(int j, int i) {
+    if ((0 <= i) && (i < gamewidth) && (0 <= j) && (j < gameheight)) return true;
+    else return false;
+}
+
+void outfield(char array[gameheight][gamewidth], const char *filename) {
+    FILE *file = fopen(filename, "w");
+    if (file == NULL) {
+        printf("Error: Could not open file %s\n", filename);
+        return;
+    }
+    for (int i = 0; i < gameheight; i++) {
+        for (int j = 0; j < gamewidth; j++) {
+            fprintf(file, "%c", array[i][j]);
+            if (j < gamewidth - 1) {
+                fprintf(file, "");
+            }
+        }
+        fprintf(file, "\n");
+    }
+    
+    fclose(file);
+}
+
 void get_size() {
+  int wcol, wrow;
   struct winsize w;
   ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
   wcol = w.ws_col;
@@ -40,20 +76,21 @@ void get_size() {
   printf("Columns: %d\n", wcol);
   ghx = (wcol / 2) - (gamewidth / 2);
   ghy = (wrow / 2) - (gameheight / 2);
-  gmx = ghx + (gamewidth - 1);
-  gmy = ghy + (gameheight - 1);
 }
 
+
 void action(int action) {
-  char ch = openfield[(py - ghy)][(px - ghx)];
-  char hch = hiddenfield[(py - ghy)][(px - ghx)];
+  int lpx = (px - ghx);
+  int lpy = (py - ghy);
+  char ch = openfield[lpy][lpx];
+  char hch = hiddenfield[lpy][lpx];
   switch (action) {
   case 1:
     if (ch == ' ') {
-      openfield[(py - ghy)][(px - ghx)] = 'F';
+      openfield[lpy][lpx] = 'F';
     }
     if (ch == 'F') {
-      openfield[(py - ghy)][(px - ghx)] = ' ';
+      openfield[lpy][lpx] = ' ';
     }
     break;
     // flag
@@ -61,32 +98,35 @@ void action(int action) {
     if (hch == 'B')
       runcond = 2;
     if (hch == ' ') {
+        mossy(lpy,lpx);
       break;
     } else
-      openfield[(py - ghy)][(px - ghx)] = hch;
+      showfield(lpy, lpx);
     break;
-    // test
   }
 }
 
 int quick_key() {
+  int gmx = ghx + (gamewidth - 1);
+  int gmy = ghy + (gameheight - 1);
+  //upperlimits on player travel
   char ch;
   ch = getchar();
   switch (ch) {
   case 'k':
-    if (py > ghy)
+    if ((py > ghy) | DEBUG)
       py--;
     break;
   case 'j':
-    if (py < gmy)
+    if ((py < gmy) | DEBUG)
       py++;
     break;
   case 'h':
-    if (px > ghx)
+    if ((px > ghx) | DEBUG)
       px--;
     break;
   case 'l':
-    if (px < gmx)
+    if ((px < gmx) | DEBUG)
       px++;
     break;
   case 'f':
@@ -103,7 +143,7 @@ int quick_key() {
   return 0;
 }
 
-void flatten() {
+void renderfield(char field[gameheight][gamewidth]) {
   clearcolor();
   fgcolor(BLUE);
   bgcolor(BLUE);
@@ -124,7 +164,7 @@ void flatten() {
     }
     printf(BORDERSYM);
   }
-  cpos((ghx - 1), (gmy + 1));
+  cpos((ghx - 1), ((ghy + (gameheight - 1)) + 1));
   for (int i = 0; i <= (gamewidth + 1); i++) {
     printf(BORDERSYM);
   }
@@ -132,13 +172,10 @@ void flatten() {
   fgcolor(WHITE);
   bgcolor(BLUE);
   cpos(ghx, (ghy - 2));
-  printf("X: %d Y: %d   Bombcount: %d  Flags: %d  B: %d %d", (px - ghx),
-         (py - ghy), bombcount, flags, boxxys, boxxyso);
+  printf("X: %d Y: %d fX: %d fY: %d   Bombcount: %d  Flags: %d", px, py, (px - ghx),
+         (py - ghy), bombcount, flags);
   cpos(ghx, (ghy - 1));
   fflush(stdout);
-}
-
-void renderfield(char field[gameheight][gamewidth]) {
   flags = 0;
   cpos(ghx, ghy);
   for (int j = 0; j < gameheight; j++) {
@@ -160,6 +197,7 @@ void renderfield(char field[gameheight][gamewidth]) {
     }
   }
 }
+
 void renderplayer() {
   char ch = openfield[(py - ghy)][(px - ghx)];
   cpos(px, py);
@@ -193,13 +231,6 @@ void setfield() {
       if (!(hiddenfield[j][i] == 'B')) {
         for (int a = -1; a <= 1; a++) {
           for (int b = -1; b <= 1; b++) {
-            // vv check if ring member
-            // ringfield[i][j] = ' ';
-            // buildboxring(i, j);
-            // if (isvoidnei(i,j)) {
-            //     nc++;
-            // }
-        // vv check if bomb
         if (((i + a) >= 0) && ((j + b) >= 0) &&
             (hiddenfield[j + b][i + a] == 'B'))
           count++;
@@ -224,7 +255,6 @@ void gameloop() {
     // fgcolor(REDI);
     int r, g, b;
     // hextoint(RED,&r,&g,&b);
-    flatten();
     renderfield(openfield);
     renderplayer();
     fflush(stdout);
@@ -235,29 +265,45 @@ void gameloop() {
   clearcolor();
   fflush(stdout);
   chome();
-  clearterm();
+  if (!DEBUG) clearterm();
 }
 
-void setopen() {
-    for (int j = 0; j < gameheight; j++) {
-        for (int i = 0; i < gamewidth; i++) {
-            openfield[j][i] = ' ';
-        }
+void mossy(int j, int i) {
+    //mossy propigates revielded tiles starting at j and i
+    //'V' is used as a marker char
+    if (hiddenfield[j][i] == ' ') {
+        ringfield[j][i] = 'V';
     }
+    for (int a = 1; a <= 10; a++) {
+        //moss loop
+      for (int tj = 0; tj < gameheight; tj++) {
+        for (int ti = 0; ti < gamewidth; ti++) {
+            if (ringfield[tj][ti] == 'V') {
+                openfield[tj][ti] = '~';
+                for (int a = -1; a <= 1; a++) {
+                  for (int b = -1; b <= 1; b++) {
+                      if ((ringfield[tj+a][ti+b] == ' ') && safeplace((tj+a), (ti+b))) {
+                          ringfield[tj+a][ti+b] = 'V';
+                      } else if (!(hiddenfield[tj+a][ti+b] == ' ') && safeplace((tj+a), (ti+b))) {
+                          showfield((tj+a),(ti+b));
+                  }
+                }
+            }
+        }
+      }
+    }
+    }
+    if (DEBUG) outfield(ringfield, "ringfield.txt");
 }
 
 int main() {
   // Setup
   get_size(); //Gets the size of the terminal window and sets global vars accordingly. This function is linux exclusive.
-  // memset(openfield, ' ', sizeof(openfield));
-  setfield();
-  // memcpy(openfield, hiddenfield, sizeof(hiddenfield));
-  setopen();
-  memcpy(openfield, hiddenfield, sizeof(hiddenfield));
-  // Setup end
-
-  gameloop();
-
+  setfield(); //set the hidden field
+  memset(openfield, ' ', sizeof(openfield)); //sets the open field
+  memcpy(ringfield, hiddenfield, sizeof(hiddenfield)); //sets the ringfield
+  if (DEBUG) outfield(ringfield, "ringfield.txt"); //creates runtime text doc for ringfield
+  gameloop(); //main gameloop
   // Game end check
   if (runcond == 2)
     printf("You've Blown up\n");
